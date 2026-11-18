@@ -263,7 +263,7 @@ select {
 
         <div class="card" id="pdfCard">
           <h2 class="sh">Carica uno spartito PDF</h2>
-          <p class="hint">Scegli un PDF con le sigle sopra le parole. Le sigle vengono lette e sostituite dai diagrammi sul manico, nello stesso punto del testo. Il PDF deve contenere testo vero, non una foto o una scansione.</p>
+          <p class="hint">Scegli un PDF con le sigle sopra le parole. Le sigle vengono lette e sotto ognuna compare la sua posizione sul manico, nello stesso punto del testo. Il PDF deve contenere testo vero, non una foto o una scansione.</p>
           <label class="check"><input type="checkbox" id="pdfDrop" checked><span>Ignora i diagrammi già presenti nel PDF (sigle isolate a destra del testo)</span></label>
           <div class="btns"><button class="btn primary" type="button" id="btnPdf">Scegli il PDF</button></div>
           <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
@@ -320,8 +320,8 @@ select {
       <div class="stack">
         <div class="ctrls">
           <div class="seg2" role="group" aria-label="Formato accordi">
-            <button type="button" data-mode="pos" aria-pressed="true">Solo posizioni</button>
-            <button type="button" data-mode="graph" aria-pressed="false">Posizioni e sigle</button>
+            <button type="button" data-mode="graph" aria-pressed="true">Sigla e posizione</button>
+            <button type="button" data-mode="pos" aria-pressed="false">Solo posizioni</button>
             <button type="button" data-mode="names" aria-pressed="false">Solo sigle</button>
           </div>
           <div class="seg2" role="group" aria-label="Dimensione diagrammi" id="sizeSeg">
@@ -1040,8 +1040,8 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
   const KEYS = { prefs: 'qa:prefs', lib: 'qa:lib', cur: 'qa:cur', drive: 'qa:drive' };
   const DRIVE = 'Google Drive';
 
-  let prefs = Object.assign({ mode: 'pos', size: 'm', v: 0 }, safeJSON(store.get(KEYS.prefs)) || {});
-  if (prefs.v !== 2) { prefs.mode = 'pos'; prefs.v = 2; store.set(KEYS.prefs, JSON.stringify(prefs)); }
+  let prefs = Object.assign({ mode: 'graph', size: 'm', v: 0 }, safeJSON(store.get(KEYS.prefs)) || {});
+  if (prefs.v !== 3) { prefs.mode = 'graph'; prefs.v = 3; store.set(KEYS.prefs, JSON.stringify(prefs)); }
   let lib = safeJSON(store.get(KEYS.lib));
   if (!Array.isArray(lib)) lib = [];
   let song = null, mcp = null, dl = null, mcpState = 'pending', saveTimer = null, raf = 0, tryIdx = 0;
@@ -1663,7 +1663,7 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
       if (!song.example) persist();
       const s = blankSong();
       s.title = r.title || file.name.replace(/\.pdf$/i, ''); s.artist = r.artist || ''; s.lines = r.lines;
-      prefs.mode = 'pos'; store.set(KEYS.prefs, JSON.stringify(prefs));
+      prefs.mode = 'graph'; store.set(KEYS.prefs, JSON.stringify(prefs));
       loadSong(s, true);
       $('#rawBox').open = false;
       if (!r.nChords) {
@@ -1827,7 +1827,7 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
       if (i < 0) { lib.push(normalize(s)); added++; }
       else if ((s.updated || 0) > (lib[i].updated || 0)) { lib[i] = normalize(s); updated++; }
     });
-    if (d.prefs && typeof d.prefs === 'object') { prefs = Object.assign(prefs, { mode: d.prefs.mode || prefs.mode, size: d.prefs.size || prefs.size, v: 2 }); store.set(KEYS.prefs, JSON.stringify(prefs)); }
+    if (d.prefs && typeof d.prefs === 'object') { prefs = Object.assign(prefs, { mode: d.prefs.mode || prefs.mode, size: d.prefs.size || prefs.size, v: 3 }); store.set(KEYS.prefs, JSON.stringify(prefs)); }
     store.set(KEYS.lib, JSON.stringify(lib));
     const cur = lib.find(x => x.id === song.id); if (cur && !song.example) song = normalize(cur);
     renderAll(); updateBackupUI(); setView('save');
