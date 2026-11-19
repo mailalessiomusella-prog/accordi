@@ -578,7 +578,14 @@ function tryParse(t, mode) {
   if (sl >= 0) {
     qual = rest.slice(0, sl);
     const b = rest.slice(sl + 1);
+    const sg = b.match(/^(\d{1,2})([-+])$/);
     if (/^\d{1,2}$/.test(b)) tension = +b;
+    else if (sg) {
+      /* notazione italiana: 9- = nona minore, 5- = quinta diminuita, 5+ / 11+ / 9+ = aumentata */
+      const alt = { '9-': 'b9', '9+': '#9', '5-': 'b5', '5+': '#5', '11+': '#11', '13-': 'b13' }[sg[0]];
+      if (!alt) return null;
+      qual += alt;
+    }
     else {
       const bn = readNote(b, mode);
       if (!bn || bn.len !== b.length) return null;
@@ -905,10 +912,19 @@ function scoreFromItems(pages, opts) {
     });
     groups.forEach(g => {
       g.items.sort((a, b) => a.x - b.x);
-      const toks = [];
+      /* i pezzi di testo del PDF che si toccano (es. «MI» + «m7/9») formano una sola parola */
+      const chs = []; let prevEnd = null;
       g.items.forEach(it => {
-        const cw = it.w / Math.max(it.str.length, 1), re = /\S+/g; let m;
-        while ((m = re.exec(it.str))) toks.push({ s: m[0], x: it.x + m.index * cw, x2: it.x + (m.index + m[0].length) * cw, h: it.h });
+        const cw = it.w / Math.max(it.str.length, 1);
+        if (prevEnd !== null && it.x - prevEnd > 0.2 * it.h) chs.push({ c: ' ', x: prevEnd, x2: it.x, h: it.h });
+        for (let i = 0; i < it.str.length; i++) chs.push({ c: it.str[i], x: it.x + i * cw, x2: it.x + (i + 1) * cw, h: it.h });
+        prevEnd = it.x + it.w;
+      });
+      const toks = []; let cur = null;
+      chs.forEach(ch => {
+        if (/\s/.test(ch.c)) { cur = null; return; }
+        if (!cur) { cur = { s: '', x: ch.x, x2: ch.x2, h: ch.h }; toks.push(cur); }
+        cur.s += ch.c; cur.x2 = ch.x2;
       });
       toks.sort((a, b) => a.x - b.x);
       rows.push({ page: pi, y: g.y, items: g.items, toks, h: med(g.items.map(i => i.h)) });
@@ -1126,6 +1142,12 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
   function isChordLine(line) {
     const tk = line.trim().split(/\s+/).filter(Boolean);
     return tk.length > 0 && tk.every(t => parseChord(t));
+  }
+  /* se nel testo incollato ci sono righe fatte solo di sigle, le riconosce da solo */
+  function looksLikeChords(raw) {
+    const L = raw.replace(/\r/g, '').split('\n').filter(l => l.trim());
+    const n = L.filter(l => isChordLine(l)).length;
+    return n >= 2 && n / L.length >= 0.2;
   }
   function importText(raw, withChords) {
     const L = raw.replace(/\r/g, '').replace(/\t/g, '    ').split('\n');
@@ -1881,6 +1903,9 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
       setTimeout(() => { armReplace = false; btn.textContent = 'Trascrivi a righe alterne'; }, 4000); return;
     }
     armReplace = false; btn.textContent = 'Trascrivi a righe alterne';
+    const nz = raw.split('\n').filter(l => l.trim()), nc = nz.filter(isChordLine).length;
+    if (!$('#hasChords').checked && nc >= 3 && nc >= nz.length * 0.15) { $('#hasChords').checked = true; toast('Ho riconosciuto le righe di accordi nel testo'); }
+    if (!$('#hasChords').checked && looksLikeChords(raw)) { $('#hasChords').checked = true; toast('Ho riconosciuto le righe di accordi nel testo'); }
     song.lines = importText(raw, $('#hasChords').checked); song.variants = song.variants || {};
     touch(); $('#rawBox').open = false;
     renderLines(0, 'c'); renderUsed(); renderSheet();
