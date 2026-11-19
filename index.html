@@ -284,6 +284,16 @@ input[type="text"], textarea, select { background: var(--sunk); }
 
 .bkmac { display: grid; gap: 8px; }
 .path { font: 13px/1.4 var(--mono); background: var(--sunk); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; color: var(--accent); }
+
+/* ---- ricerca brani ---- */
+.srch { border-top: 1px dashed var(--line); padding-top: 14px; display: grid; gap: 10px; }
+.sh2 { margin: 0; font: 400 18px/1.2 var(--display); color: var(--accent); }
+.srchrow { display: flex; gap: 8px; }
+.srchrow input { flex: 1; min-width: 0; }
+.srchlinks { display: flex; flex-wrap: wrap; gap: 8px; }
+.srchlinks .btn { text-decoration: none; display: inline-flex; align-items: center; }
+.srchsteps { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; line-height: 1.5; display: grid; gap: 4px; }
+#pdfCard.drag { outline: 2px dashed var(--accent); outline-offset: 3px; background: rgba(234,164,58,.08); }
 </style></head><body>
 <div class="app" id="app" data-view="write">
   <header class="top">
@@ -308,6 +318,16 @@ input[type="text"], textarea, select { background: var(--sunk); }
           <div class="btns"><button class="btn primary" type="button" id="btnPdf">Scegli il PDF</button></div>
           <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
           <div class="msg" id="pdfMsg" role="status" aria-live="polite" hidden></div>
+          <p class="hint">Puoi anche trascinare il PDF su questa scheda.</p>
+
+          <div class="srch">
+            <h3 class="sh2">Non hai il PDF? Cerca il brano</h3>
+            <form class="srchrow" id="srchForm" role="search">
+              <input type="text" id="srchIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Brano o artista, es. Pino Daniele Quando" aria-label="Cerca un brano o un artista">
+              <button class="btn primary" type="submit" id="btnSrch">Cerca</button>
+            </form>
+            <div id="srchRes" aria-live="polite"></div>
+          </div>
         </div>
 
         <div class="card">
@@ -1748,6 +1768,43 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
     } finally { btn.disabled = false; }
   }
   $('#btnPdf').addEventListener('click', () => $('#pdfIn').click());
+  /* trascina il PDF sulla scheda */
+  const pc = $('#pdfCard');
+  ['dragenter', 'dragover'].forEach(ev => pc.addEventListener(ev, e => { if (e.dataTransfer && [].some.call(e.dataTransfer.types || [], t => t === 'Files')) { e.preventDefault(); pc.classList.add('drag'); } }));
+  pc.addEventListener('dragleave', e => { if (!pc.contains(e.relatedTarget)) pc.classList.remove('drag'); });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+  pc.addEventListener('drop', e => {
+    e.preventDefault(); pc.classList.remove('drag');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { setMsg($('#pdfMsg'), 'Questo non è un PDF. Trascina un file con estensione .pdf.', 'err'); return; }
+    importPdf(f);
+  });
+
+  /* ricerca di brani e artisti: nei tuoi brani e online */
+  function renderSearch(q) {
+    const host = $('#srchRes'), t = q.trim(); if (!t) { host.innerHTML = ''; return; }
+    const low = t.toLowerCase(), words = low.split(/\s+/);
+    const hits = lib.filter(s => { const h = ((s.title || '') + ' ' + (s.artist || '')).toLowerCase(); return words.every(w => h.includes(w)); }).slice(0, 6);
+    const enc = encodeURIComponent;
+    const links = [
+      ['Cerca lo spartito in PDF', 'https://www.google.com/search?q=' + enc(t + ' accordi testo filetype:pdf')],
+      ['Cerca testo e accordi sul web', 'https://www.google.com/search?q=' + enc(t + ' testo e accordi')],
+      ['Cerca su Ultimate Guitar', 'https://www.ultimate-guitar.com/search.php?search_type=title&value=' + enc(t)]
+    ];
+    host.innerHTML =
+      (hits.length ? '<div class="lbl">Nei tuoi brani</div><ul class="flist">' + hits.map(s => '<li><div><strong>' + esc(s.title || 'Senza titolo') + '</strong><span class="sub">' + esc(s.artist || '') + '</span></div><div class="acts"><button class="btn small" type="button" data-sopen="' + esc(s.id) + '">Apri</button></div></li>').join('') + '</ul>' : '<p class="hint">Nessun brano con questo nome tra i tuoi.</p>') +
+      '<div class="lbl">Cerca online</div><div class="srchlinks">' + links.map(l => '<a class="btn" target="_blank" rel="noopener noreferrer" href="' + l[1] + '">' + l[0] + '</a>').join('') + '</div>' +
+      '<ol class="srchsteps"><li>Apri uno dei risultati e scarica o salva lo spartito in PDF. In alternativa copia il testo con gli accordi.</li><li>Torna qui e trascina il PDF sulla scheda, oppure premi «Scegli il PDF». Se hai copiato il testo, incollalo in «1. Incolla il testo».</li><li>Le sigle diventano subito diagrammi sul manico, ognuno sotto la sua sigla.</li></ol>' +
+      '<p class="hint">Testi e accordi sono protetti dal diritto d\u2019autore: usa solo spartiti che hai il diritto di usare. L\u2019app non scarica nulla da sola.</p>';
+  }
+  $('#srchForm').addEventListener('submit', e => { e.preventDefault(); renderSearch($('#srchIn').value); });
+  $('#srchIn').addEventListener('input', () => { if (!$('#srchIn').value.trim()) renderSearch(''); });
+  $('#srchRes').addEventListener('click', e => {
+    const o = e.target.closest('[data-sopen]'); if (!o) return;
+    const s = lib.find(x => x.id === o.dataset.sopen); if (s) { loadSong(normalize(s), false); toast('Brano aperto'); }
+  });
   $('#pdfIn').addEventListener('change', e => {
     const f = e.target.files && e.target.files[0]; e.target.value = '';
     if (f) importPdf(f);
@@ -2035,6 +2092,10 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
       else if (m.t === 'folder') { NAT.folder = m.folder; window.dispatchEvent(new CustomEvent('qa-native', { detail: m })); }
       else window.dispatchEvent(new CustomEvent('qa-native', { detail: m }));
     };
+    document.addEventListener('click', e => {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (a && /^https?:/i.test(a.href)) { e.preventDefault(); post({ t: 'url', url: a.href }); }
+    });
     /* i selettori di file del browser non funzionano nella finestra: uso la finestra "Apri" di macOS */
     const nativeClick = HTMLInputElement.prototype.click;
     HTMLInputElement.prototype.click = function () {
