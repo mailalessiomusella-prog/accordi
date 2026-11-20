@@ -313,10 +313,10 @@ input[type="text"], textarea, select { background: var(--sunk); }
 
         <div class="card" id="pdfCard">
           <h2 class="sh">Carica uno spartito PDF</h2>
-          <p class="hint">Scegli un PDF con le sigle sopra le parole. Le sigle vengono lette e sotto ognuna compare la sua posizione sul manico, nello stesso punto del testo. Il PDF deve contenere testo vero, non una foto o una scansione.</p>
+          <p class="hint">Scegli un PDF con le sigle sopra le parole. Le sigle vengono lette e sotto ognuna compare la sua posizione sul manico, nello stesso punto del testo. Il PDF deve contenere testo vero, non una foto o una scansione. Accetta anche una pagina web salvata (.html).</p>
           <label class="check"><input type="checkbox" id="pdfDrop" checked><span>Ignora i diagrammi già presenti nel PDF (sigle isolate a destra del testo)</span></label>
-          <div class="btns"><button class="btn primary" type="button" id="btnPdf">Scegli il PDF</button></div>
-          <input type="file" id="pdfIn" accept="application/pdf,.pdf" hidden>
+          <div class="btns"><button class="btn primary" type="button" id="btnPdf">Scegli il PDF o la pagina salvata</button><button class="btn" type="button" id="btnLatest" hidden>Importa l'ultimo file scaricato</button></div>
+          <input type="file" id="pdfIn" accept="application/pdf,.pdf,.html,.htm,text/html" hidden>
           <div class="msg" id="pdfMsg" role="status" aria-live="polite" hidden></div>
           <p class="hint">Puoi anche trascinare il PDF su questa scheda.</p>
 
@@ -1767,7 +1767,101 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
         : 'Non riesco a leggere questo PDF.', 'err');
     } finally { btn.disabled = false; }
   }
+
+  /* ---------- pagina web salvata (.html) ---------- */
+  const BLOCK_TAGS = /^(P|DIV|LI|UL|OL|TR|TABLE|H[1-6]|SECTION|ARTICLE|PRE|BLOCKQUOTE|HEADER|FOOTER|MAIN|DT|DD|FIGURE|FORM|ASIDE|NAV)$/;
+  const CHORD_CLS = /chord|accord|sigla|\bnota\b|\bnote\b|\bcrd\b/i;
+  function htmlLines(root) {
+    const lines = []; let cur = { t: '', ch: [] };
+    const flush = force => {
+      if (!force && !cur.ch.length && !cur.t.trim()) return;
+      if (cur.ch.length) {
+        let cl = ''; cur.ch.forEach(c => { while (cl.length < c.col) cl += ' '; if (cl.length && !/\s$/.test(cl)) cl += ' '; cl += c.text; });
+        lines.push(cl, cur.t.replace(/\s+$/, '') || '');
+      } else lines.push(cur.t.replace(/\s+$/, ''));
+      cur = { t: '', ch: [] };
+    };
+    const walk = (n, pre) => {
+      if (n.nodeType === 3) {
+        const raw = n.nodeValue;
+        if (pre) { raw.split('\n').forEach((p, i) => { if (i) flush(true); cur.t += p.replace(/\t/g, '    ').replace(/\r/g, ''); }); }
+        else { let s = raw.replace(/\s+/g, ' '); if (!cur.t.length) s = s.replace(/^ /, ''); cur.t += s; }
+        return;
+      }
+      if (n.nodeType !== 1) return;
+      const tag = n.tagName;
+      if (/^(SCRIPT|STYLE|NOSCRIPT|SVG|NAV|HEADER|FOOTER|ASIDE|FORM|BUTTON|SELECT|IFRAME|HEAD|TEMPLATE)$/i.test(tag)) return;
+      if (tag === 'BR') { flush(true); return; }
+      const cls = (typeof n.className === 'string' ? n.className : '') + ' ' + (n.getAttribute('data-chord') != null ? 'chord' : '');
+      if (CHORD_CLS.test(cls) && !BLOCK_TAGS.test(tag)) {
+        const tx = (n.textContent || '').trim(), tk = tx.split(/\s+/).filter(Boolean);
+        if (tk.length && tk.every(t => parseChord(t))) { cur.ch.push({ col: cur.t.length, text: tx }); return; }
+      }
+      const blk = BLOCK_TAGS.test(tag), isPre = pre || tag === 'PRE';
+      if (blk) flush();
+      for (let c = n.firstChild; c; c = c.nextSibling) walk(c, isPre);
+      if (blk) flush();
+    };
+    walk(root, false); flush();
+    return lines;
+  }
+  const countChords = lines => lines.filter(l => l.trim() && isChordLine(l)).length;
+  function htmlToSong(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script,style,noscript,svg,template').forEach(e => e.remove());
+    const body = doc.body; if (!body) return null;
+    const all = htmlLines(body), total = countChords(all);
+    if (!total) return { empty: true };
+    /* l'elemento più piccolo che contiene (quasi) tutte le righe di accordi: scarta menu, pubblicità, commenti */
+    let best = body, bestLines = all;
+    const cands = [].slice.call(body.querySelectorAll('pre,article,main,section,div,td')).filter(e => e.textContent.length > 30).sort((x, y) => x.textContent.length - y.textContent.length);
+    for (const e of cands) { const ls = htmlLines(e); if (countChords(ls) >= Math.ceil(total * 0.8)) { best = e; bestLines = ls; break; } }
+    let lines = bestLines.map(l => l.replace(/ /g, ' '));
+    const out = []; lines.forEach(l => { if (!l.trim() && (!out.length || !out[out.length - 1].trim())) return; out.push(l); });
+    while (out.length && !out[0].trim()) out.shift();
+    const h1 = doc.querySelector('h1'), ogt = doc.querySelector('meta[property="og:title"]');
+    let title = ((h1 && h1.textContent) || (ogt && ogt.getAttribute('content')) || (doc.title || '')).replace(/\s+/g, ' ').trim();
+    title = title.replace(/\s*[|–-]\s*(accordi e spartiti|accordiespartiti.*)$/i, '').replace(/^accordi\s+(di\s+)?/i, '').trim();
+    return { title, lines: importText(out.join('\n'), true) };
+  }
+  async function readHtmlFile(file) {
+    const buf = await file.arrayBuffer();
+    let t = new TextDecoder('utf-8').decode(buf);
+    if (t.includes('�')) t = new TextDecoder('windows-1252').decode(buf);
+    return t;
+  }
+  async function importHtml(file) {
+    const out = $('#pdfMsg'), btn = $('#btnPdf');
+    btn.disabled = true; setMsg(out, 'Leggo la pagina salvata…', '');
+    try {
+      const r = htmlToSong(await readHtmlFile(file));
+      if (!r || r.empty) {
+        setMsg(out, 'Nella pagina non trovo righe di accordi. Il sito potrebbe mostrarli come immagini oppure caricarli solo dopo l’apertura. Prova a salvare dal browser la pagina completa, oppure usa «Stampa» e «Salva come PDF» e carica il PDF.', 'err'); return;
+      }
+      if (!song.example) persist();
+      const s = blankSong();
+      s.title = r.title || file.name.replace(/\.html?$/i, ''); s.artist = ''; s.lines = r.lines;
+      prefs.mode = 'graph'; store.set(KEYS.prefs, JSON.stringify(prefs));
+      loadSong(s, true); $('#rawBox').open = false;
+      const n = r.lines.reduce((k, l) => k + (l.c.trim() ? l.c.trim().split(/\s+/).length : 0), 0);
+      setMsg(out, '', ''); setView('preview');
+      toast(n + ' accordi trasformati in diagrammi. Controlla titolo e artista.');
+    } catch (e) { setMsg(out, 'Non riesco a leggere questa pagina.', 'err'); }
+    finally { btn.disabled = false; }
+  }
+  const importAny = f => (/\.(html?|xhtml)$/i.test(f.name) || /html/.test(f.type || '')) ? importHtml(f) : importPdf(f);
   $('#btnPdf').addEventListener('click', () => $('#pdfIn').click());
+  if (window.QA_NATIVE) {
+    $('#btnLatest').hidden = false;
+    $('#btnLatest').addEventListener('click', () => { try { window.webkit.messageHandlers.qa.postMessage({ t: 'latest' }); } catch (e) {} });
+    window.addEventListener('qa-native', e => {
+      const m = e.detail || {};
+      if (m.t === 'file' && m.id === 'latest' && !m.cancel) {
+        const bin = atob(m.b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        importAny(new File([u], m.name, { type: m.mime || '' }));
+      } else if (m.t === 'nolatest') setMsg($('#pdfMsg'), 'Nella cartella Download non trovo PDF o pagine .html scaricati di recente.', 'err');
+    });
+  }
   /* trascina il PDF sulla scheda */
   const pc = $('#pdfCard');
   ['dragenter', 'dragover'].forEach(ev => pc.addEventListener(ev, e => { if (e.dataTransfer && [].some.call(e.dataTransfer.types || [], t => t === 'Files')) { e.preventDefault(); pc.classList.add('drag'); } }));
@@ -1778,8 +1872,8 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
     e.preventDefault(); pc.classList.remove('drag');
     const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (!f) return;
-    if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { setMsg($('#pdfMsg'), 'Questo non è un PDF. Trascina un file con estensione .pdf.', 'err'); return; }
-    importPdf(f);
+    if (!/\.(pdf|html?|xhtml)$/i.test(f.name) && f.type !== 'application/pdf') { setMsg($('#pdfMsg'), 'Trascina un PDF oppure una pagina web salvata (.html).', 'err'); return; }
+    importAny(f);
   });
 
   /* ricerca di brani e artisti: nei tuoi brani e online */
@@ -1809,7 +1903,7 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
   });
   $('#pdfIn').addEventListener('change', e => {
     const f = e.target.files && e.target.files[0]; e.target.value = '';
-    if (f) importPdf(f);
+    if (f) importAny(f);
   });
 
   /* ---------- dizionario e database degli accordi ---------- */
@@ -2089,7 +2183,7 @@ if (typeof module !== 'undefined') module.exports = { scoreFromItems };
     /* risposte del programma Mac */
     const waiting = {}; let seq = 0;
     window.QA_NATIVE_CB = m => {
-      if (m.t === 'file') { const w = waiting[m.id]; delete waiting[m.id]; if (w) w(m); }
+      if (m.t === 'file') { const w = waiting[m.id]; delete waiting[m.id]; if (w) w(m); else window.dispatchEvent(new CustomEvent('qa-native', { detail: m })); }
       else if (m.t === 'saved') { NAT.savedAt = m.at; window.dispatchEvent(new CustomEvent('qa-native', { detail: m })); }
       else if (m.t === 'folder') { NAT.folder = m.folder; window.dispatchEvent(new CustomEvent('qa-native', { detail: m })); }
       else window.dispatchEvent(new CustomEvent('qa-native', { detail: m }));
